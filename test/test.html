@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>校园失物招领 - 单元测试</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family:"PingFang SC","Microsoft YaHei",sans-serif; background:#f0f2f5; padding:30px 20px; color:#333; }
+  .wrap { max-width:860px; margin:0 auto; }
+  h1 { font-size:22px; margin-bottom:6px; }
+  .sub { color:#888; font-size:13px; margin-bottom:20px; }
+  .summary { padding:16px 20px; border-radius:10px; color:#fff; font-size:16px; font-weight:600; margin-bottom:20px; }
+  .summary.ok { background:#07c160; }
+  .summary.bad { background:#ff4d4f; }
+  .group { background:#fff; border-radius:10px; margin-bottom:16px; overflow:hidden; box-shadow:0 1px 4px rgba(0,0,0,.06); }
+  .group-title { padding:12px 18px; background:#fafafa; font-size:15px; font-weight:600; border-bottom:1px solid #f0f0f0; }
+  .group-title .cnt { float:right; font-size:12px; color:#999; font-weight:400; }
+  .case { padding:10px 18px; font-size:13px; border-bottom:1px solid #f7f7f7; display:flex; align-items:flex-start; gap:10px; }
+  .case:last-child { border-bottom:none; }
+  .case .icon { font-weight:700; }
+  .case.pass .icon { color:#07c160; }
+  .case.fail .icon { color:#ff4d4f; }
+  .case .name { flex:1; }
+  .case .name b { color:#333; }
+  .case .err { color:#ff4d4f; font-size:12px; margin-top:3px; }
+  .case.fail { background:#fff5f5; }
+  .run-again { margin-top:16px; text-align:center; }
+  .run-again a { color:#07c160; font-size:13px; cursor:pointer; text-decoration:underline; }
+  code { background:#f5f5f5; padding:1px 5px; border-radius:3px; font-size:12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🧪 校园失物招领 · 单元测试</h1>
+  <div class="sub">测试对象：<code>js/store.js</code>（数据层纯函数）· 白盒测试 · 浏览器内自动运行，无需安装任何环境</div>
+  <div id="summary" class="summary">运行中…</div>
+  <div id="results"></div>
+  <div class="run-again"><a onclick="location.reload()">↻ 重新运行全部测试</a></div>
+</div>
+
+<script src="../js/store.js"></script>
+<script>
+/* ========== 极简测试框架 ========== */
+var S = window.LostFoundStore;
+var results = []; // {group, name, pass, err}
+var groups = {};
+
+function test(group, name, fn) {
+  try { fn(); results.push({group:group, name:name, pass:true}); }
+  catch (e) { results.push({group:group, name:name, pass:false, err:e.message}); }
+}
+function assert(cond, msg) { if (!cond) throw new Error(msg || '断言失败'); }
+function eq(a, b, msg) {
+  if (JSON.stringify(a) !== JSON.stringify(b))
+    throw new Error((msg||'') + ' 期望 ' + JSON.stringify(b) + '，实际 ' + JSON.stringify(a));
+}
+function assertThrow(fn, msg) {
+  var threw = false;
+  try { fn(); } catch (e) { threw = true; }
+  if (!threw) throw new Error(msg || '期望抛出异常但没有');
+}
+
+/* ========== 构造测试数据 ========== */
+var ITEMS = [
+  { id:'a', type:'lost',  title:'校园卡',   category:'证件卡片', location:'第二食堂', description:'中午遗失校园卡一张', contact:'wx1', status:'active', createdAt:1000, views:2 },
+  { id:'b', type:'found', title:'黑色雨伞', category:'雨具',     location:'图书馆',   description:'捡到黑色长柄雨伞',   contact:'wx2', status:'active', createdAt:2000, views:5 },
+  { id:'c', type:'found', title:'一串钥匙', category:'钥匙',     location:'宿舍3号楼',description:'三把钥匙带挂件',     contact:'wx3', status:'done',   createdAt:3000, views:0 }
+];
+
+/* ========== 1. validateItem 数据校验 ========== */
+var G = 'validateItem 数据校验';
+test(G, '合法数据应返回空错误数组', function () {
+  var errs = S.validateItem({ type:'lost', title:'校园卡', location:'食堂', time:'2026-10-04 12:00', contact:'wx' });
+  eq(errs.length, 0, '合法数据应无错误');
+});
+test(G, '缺少物品名称应报错', function () {
+  var errs = S.validateItem({ type:'lost', location:'食堂', time:'t', contact:'wx' });
+  assert(errs.some(function(e){return e.indexOf('物品名称')>=0;}), '应提示物品名称为空');
+});
+test(G, '缺少地点应报错', function () {
+  var errs = S.validateItem({ type:'lost', title:'卡', time:'t', contact:'wx' });
+  assert(errs.some(function(e){return e.indexOf('地点')>=0;}));
+});
+test(G, '缺少联系方式应报错', function () {
+  var errs = S.validateItem({ type:'lost', title:'卡', location:'食堂', time:'t' });
+  assert(errs.some(function(e){return e.indexOf('联系方式')>=0;}));
+});
+test(G, '物品名称全空格应视为空（边界）', function () {
+  var errs = S.validateItem({ type:'lost', title:'   ', location:'食堂', time:'t', contact:'wx' });
+  assert(errs.some(function(e){return e.indexOf('物品名称')>=0;}), '全空格应判定为空');
+});
+test(G, '非法 type 应报错', function () {
+  var errs = S.validateItem({ type:'xxx', title:'卡', location:'食堂', time:'t', contact:'wx' });
+  assert(errs.length > 0, 'type 非法应报错');
+});
+
+/* ========== 2. createItem 创建条目 ========== */
+G = 'createItem 创建条目';
+test(G, '应生成唯一 id 且默认状态 active', function () {
+  var it = S.createItem({ type:'found', title:'耳机', location:'教室', time:'t', contact:'wx' });
+  assert(typeof it.id === 'string' && it.id.length > 0, '应生成 id');
+  eq(it.status, 'active');
+  eq(it.views, 0);
+  eq(it.type, 'found');
+});
+test(G, '两次创建 id 应不同', function () {
+  var a = S.createItem({ type:'lost', title:'A', location:'L', time:'t', contact:'c' });
+  var b = S.createItem({ type:'lost', title:'B', location:'L', time:'t', contact:'c' });
+  assert(a.id !== b.id, 'id 不应重复');
+});
+test(G, '应自动去除首尾空白', function () {
+  var it = S.createItem({ type:'lost', title:'  校园卡  ', location:'  食堂 ', time:'t', contact:'  wx ' });
+  eq(it.title, '校园卡');
+  eq(it.location, '食堂');
+  eq(it.contact, 'wx');
+});
+test(G, '未填分类应默认“其他”', function () {
+  var it = S.createItem({ type:'lost', title:'卡', location:'L', time:'t', contact:'c' });
+  eq(it.category, '其他');
+});
+test(G, '非法数据应抛异常', function () {
+  assertThrow(function () { S.createItem({ type:'lost', location:'L', time:'t', contact:'c' }); }, '缺标题应抛错');
+});
+
+/* ========== 3. searchItems 关键词搜索 ========== */
+G = 'searchItems 关键词搜索';
+test(G, '匹配标题', function () {
+  var r = S.searchItems(ITEMS, '校园卡');
+  eq(r.length, 1); eq(r[0].id, 'a');
+});
+test(G, '匹配描述', function () {
+  var r = S.searchItems(ITEMS, '雨伞');
+  eq(r.length, 1); eq(r[0].id, 'b');
+});
+test(G, '匹配地点', function () {
+  var r = S.searchItems(ITEMS, '宿舍');
+  eq(r.length, 1); eq(r[0].id, 'c');
+});
+test(G, '不区分大小写', function () {
+  var r = S.searchItems([{ id:'x', type:'lost', title:'iPhone', category:'', location:'', description:'', contact:'', createdAt:1, status:'active', views:0 }], 'iphone');
+  eq(r.length, 1);
+});
+test(G, '无命中返回空数组', function () {
+  var r = S.searchItems(ITEMS, '不存在的物品xyz');
+  eq(r, []);
+});
+test(G, '空关键词返回全部（不变输入）', function () {
+  var r = S.searchItems(ITEMS, '');
+  eq(r.length, ITEMS.length);
+});
+test(G, '关键词纯空格视为空返回全部', function () {
+  var r = S.searchItems(ITEMS, '   ');
+  eq(r.length, ITEMS.length);
+});
+test(G, '非数组输入应安全返回空', function () {
+  eq(S.searchItems(null, '卡'), []);
+  eq(S.searchItems(undefined, '卡'), []);
+});
+
+/* ========== 4. filterByType 类型筛选 ========== */
+G = 'filterByType 类型筛选';
+test(G, '筛选 lost 仅含寻物', function () {
+  var r = S.filterByType(ITEMS, 'lost');
+  eq(r.length, 1); eq(r[0].type, 'lost');
+});
+test(G, '筛选 found 仅含招领', function () {
+  var r = S.filterByType(ITEMS, 'found');
+  eq(r.length, 2);
+  assert(r.every(function(x){return x.type==='found';}));
+});
+test(G, 'all 返回全部', function () {
+  eq(S.filterByType(ITEMS, 'all').length, 3);
+});
+
+/* ========== 5. highlight 关键词高亮 + XSS 防护 ========== */
+G = 'highlight 高亮与安全';
+test(G, '命中关键词应被 em.hl 包裹', function () {
+  var h = S.highlight('我丢了校园卡', '校园卡');
+  assert(h.indexOf('<em class="hl">校园卡</em>') >= 0, '应高亮包裹，实际：' + h);
+});
+test(G, '关键词为空应原样返回转义文本', function () {
+  eq(S.highlight('普通文本', ''), '普通文本');
+});
+test(G, '应转义 HTML 防 XSS（安全）', function () {
+  var evil = '<script>alert(1)<' + '/script>';
+  var h = S.highlight(evil, '');
+  assert(h.indexOf('<script>') === -1, '不应出现未转义的 script 标签，实际：' + h);
+  assert(h.indexOf('&lt;script&gt;') >= 0, '应转义为 &lt;script&gt;');
+});
+test(G, '正则特殊字符关键词不应报错', function () {
+  var h = S.highlight('价格是 a+b*c', 'a+b*c');
+  assert(h.indexOf('<em class="hl">') >= 0, '特殊字符应能匹配，实际：' + h);
+});
+
+/* ========== 6. timeAgo 相对时间 ========== */
+G = 'timeAgo 相对时间';
+var NOW = 1000000; // 基准时间（毫秒）
+test(G, '小于1分钟显示“刚刚”', function () { eq(S.timeAgo(NOW - 30*1000, NOW), '刚刚'); });
+test(G, '小于1小时显示分钟', function () { eq(S.timeAgo(NOW - 5*60*1000, NOW), '5 分钟前'); });
+test(G, '小于1天显示小时', function () { eq(S.timeAgo(NOW - 3*3600*1000, NOW), '3 小时前'); });
+test(G, '小于7天显示天数', function () { eq(S.timeAgo(NOW - 2*86400*1000, NOW), '2 天前'); });
+
+/* ========== 7. 状态变更（不可变） ========== */
+G = '状态变更 markDone / reopen / remove / views';
+test(G, 'markDone 应标记完成且不改原数组', function () {
+  var r = S.markDone(ITEMS, 'a');
+  eq(r.filter(function(x){return x.id==='a';})[0].status, 'done');
+  eq(ITEMS.filter(function(x){return x.id==='a';})[0].status, 'active', '原数组不应被修改');
+});
+test(G, 'markDone 不存在的 id 不改变任何条目', function () {
+  var r = S.markDone(ITEMS, 'not_exist');
+  eq(r.length, ITEMS.length);
+});
+test(G, 'reopenItem 应恢复 active', function () {
+  var r = S.reopenItem(ITEMS, 'c');
+  eq(r.filter(function(x){return x.id==='c';})[0].status, 'active');
+});
+test(G, 'removeItem 应删除指定条目', function () {
+  var r = S.removeItem(ITEMS, 'b');
+  eq(r.length, 2);
+  assert(!r.some(function(x){return x.id==='b';}));
+});
+test(G, 'incrementViews 浏览量 +1', function () {
+  var r = S.incrementViews(ITEMS, 'a');
+  eq(r.filter(function(x){return x.id==='a';})[0].views, 3);
+  eq(ITEMS.filter(function(x){return x.id==='a';})[0].views, 2, '原对象不变');
+});
+
+/* ========== 8. localStorage 持久化 ========== */
+G = 'localStorage 持久化';
+test(G, 'save 后 load 应能读回', function () {
+  S.clearItems();
+  var sample = [{ id:'t1', type:'lost', title:'测试', status:'active', createdAt:1, views:0 }];
+  assert(S.saveItems(sample) === true);
+  var back = S.loadItems();
+  eq(back, sample);
+  S.clearItems();
+  eq(S.loadItems(), null, '清空后应返回 null');
+});
+
+/* ========== 渲染结果 ========== */
+var pass = results.filter(function(r){return r.pass;}).length;
+var fail = results.length - pass;
+var sum = document.getElementById('summary');
+sum.className = 'summary ' + (fail === 0 ? 'ok' : 'bad');
+sum.innerHTML = (fail === 0 ? '✅ 全部通过' : '❌ 存在失败') +
+  '：共 ' + results.length + ' 个用例，通过 ' + pass + '，失败 ' + fail;
+
+// 按分组渲染
+var order = [];
+results.forEach(function(r){ if (order.indexOf(r.group) === -1) order.push(r.group); });
+var html = '';
+order.forEach(function(g){
+  var cases = results.filter(function(r){return r.group === g;});
+  var gpass = cases.filter(function(c){return c.pass;}).length;
+  html += '<div class="group"><div class="group-title">' + g +
+    '<span class="cnt">' + gpass + '/' + cases.length + ' 通过</span></div>';
+  cases.forEach(function(c){
+    html += '<div class="case ' + (c.pass?'pass':'fail') + '">' +
+      '<span class="icon">' + (c.pass?'✓':'✗') + '</span>' +
+      '<span class="name"><b>' + c.name + '</b>' +
+      (c.pass ? '' : '<div class="err">→ ' + c.err + '</div>') + '</span></div>';
+  });
+  html += '</div>';
+});
+document.getElementById('results').innerHTML = html;
+</script>
+</body>
+</html>
