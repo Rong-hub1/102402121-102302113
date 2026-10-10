@@ -1,0 +1,231 @@
+============================================================
+07 — 人工测试 4 个 defect 修复
+修复日期：2026-10-10
+触发来源：manual test记录.txt（人工测试发现）
+测试结果：修复后 test.html 51/51 全绿
+============================================================
+
+
+════════════════════════════════════════════════════════════
+【defect1】 已认领项目没有单独的部分收纳，和主页其他还未完成的混在一起
+════════════════════════════════════════════════════════
+
+  问题描述：
+    首页只有"全部 / 寻物 / 招领"三个 tab，已标记完成的条目（status=done）
+    和未完成的混在一起显示，用户无法单独查看已完成信息。
+
+  期望行为（来自 manual test记录.txt）：
+    - 第一行 tab 新增"已完成"
+    - 前三个 tab 只显示未完成条目
+    - "已完成"tab 只显示已完成条目，同样具有二级分类筛选
+
+  修改文件：
+    (a) index.html  —— typeTabs 加第 4 个 tab
+    (b) app.js     —— renderHome 按 status 过滤 + collectCategories 按 pool 收集
+    (c) app.js     —— typeTabs 切换事件里重置 filterCategory
+
+  --- (a) index.html ---
+  修改前：
+    <div class="tabs" id="typeTabs">
+      <div class="tab active" data-type="all">全部</div>
+      <div class="tab" data-type="lost">寻物</div>
+      <div class="tab" data-type="found">招领</div>
+    </div>
+
+  修改后：
+    <div class="tabs" id="typeTabs">
+      <div class="tab active" data-type="all">全部</div>
+      <div class="tab" data-type="lost">寻物</div>
+      <div class="tab" data-type="found">招领</div>
+      <div class="tab" data-type="done">已完成</div>
+    </div>
+
+  --- (b) app.js renderHome 核心逻辑 ---
+  修改前：直接按 filterType + filterCategory 过滤，不区分 status
+
+  修改后：先按 filterType 决定显示 active 还是 done，再按 type 细分，
+          最后按 category 过滤。分类 chip 从当前可见条目里收集：
+    if (state.filterType === 'done') {
+      list = list.filter(function (it) { return it.status === 'done'; });
+    } else {
+      list = list.filter(function (it) { return it.status !== 'done'; });
+      // 再按 lost/found 细分...
+    }
+    renderCategoryChips(list);  // chip 基于过滤后的 list 收集
+
+  --- (c) app.js typeTabs 切换事件 ---
+  新增：切 tab 时同时重置 state.filterCategory = 'all'
+        避免从"全部+证件卡片"切到"已完成"时残留分类筛选
+
+
+════════════════════════════════════════════════════════════
+【defect2】 二级分类横向排列显示不全，无法左右拖拽
+════════════════════════════════════════════════════════
+
+  问题描述：
+    首页 typeTabs 和 filter-bar（分类 chip）内容过长时，
+    右侧被截断无法看到，也无法左右滚动。
+
+  修改文件：css/style.css
+
+  --- typeTabs ---
+  修改前（flex:1 等分，永远不会溢出）：
+    .tabs { display: flex; ... }
+    .tab { flex: 1; padding: 10px 0; ... }
+
+  修改后（固定内容宽度 + 横向滚动 + iOS 平滑回弹）：
+    .tabs {
+      display: flex;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;   ← iOS 惯性滚动
+    }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab {
+      flex-shrink: 0;    ← 关键！不被压缩
+      min-width: 70px;
+      padding: 10px 14px;
+    }
+
+  --- filter-bar ---
+  修改前：overflow-x:auto 但缺少平滑滚动
+
+  修改后：加了 -webkit-overflow-scrolling: touch;
+         原有的 chip { flex-shrink: 0 } 保持不变
+
+  --- 补充：第二次修复（用户反馈 chip 行仍不能滚） ---
+  原因：CSS 虽然有 overflow-x:auto 但滚动条被隐藏了，
+        PC 用户既没触摸板手势也看不到滚动条，无法滚动。
+  修复：
+  (a) app.js bindEvents 里新增 enableDragScroll 通用函数
+      用 mousedown/mousemove/mouseup 实现 PC 端拖拽滚动；
+      同时在移动时阻止 click 冒泡，避免"拖拽后误触发 chip 点击"
+  (b) style.css 给 .tabs 和 .filter-bar 加 cursor: grab / grabbing
+      提示用户可以拖拽
+
+  enableDragScroll 代码片段（app.js 约第 354 行）：
+    function enableDragScroll(el) {
+      var isDown = false, startX = 0, scrollLeft = 0, moved = false;
+      el.addEventListener('mousedown', function (e) {
+        isDown = true; moved = false;
+        startX = e.pageX - el.offsetLeft;
+        scrollLeft = el.scrollLeft;
+      });
+      el.addEventListener('mousemove', function (e) {
+        if (!isDown) return;
+        e.preventDefault(); moved = true;
+        var x = e.pageX - el.offsetLeft;
+        el.scrollLeft = scrollLeft - (x - startX) * 1.5;
+      });
+      // 拖拽后阻止 click 冒泡
+      el.addEventListener('click', function (e) {
+        if (moved) { e.stopPropagation(); e.preventDefault(); }
+      }, true);
+    }
+    enableDragScroll($('typeTabs'));
+    enableDragScroll($('categoryChips'));
+
+
+════════════════════════════════════════════════════════════
+【defect3】 搜索栏不能对一级分类、时间、发布者进行搜索
+════════════════════════════════════════════════════════
+
+  问题描述：
+    searchItems 只在 title / description / location / category 四个字段里搜，
+    用户搜"寻物""招领"（type）、搜时间字符串都找不到。
+
+  修改文件：js/store.js —— searchItems 函数
+
+  修改前：
+    var haystack = [it.title, it.description, it.location, it.category]
+      .join(' ').toLowerCase();
+
+  修改后：
+    var haystack = [
+      it.title,
+      it.description,
+      it.location,
+      it.category,
+      it.time,                                    ← 新增：丢失/拾获时间
+      (it.type === 'lost' ? '寻物 lost' : '招领 found')  ← 新增：中文+英文标签
+    ].join(' ').toLowerCase();
+
+  测试：
+    test.html 新增 2 条守护测试：
+    - searchItems 可按 type 中文标签（寻物/招领）搜索
+    - searchItems 可按时间字符串搜索
+
+  --- 补充：第二次修复（用户反馈"发布者"仍搜不到） ---
+  原因：app.js detail 页的发布者是硬编码的 "匿名同学"（209 行），
+        item 对象里根本没有 author 字段，搜索自然搜不到。
+  修复（第一版——被用户否决的 hack）：
+        在 haystack 里追加固定字符串 '匿名同学 发布者'
+        → 用户反馈：不想让搜"发布者"三个字命中所有条目，
+          author 应该是 item 结构体的一部分，和 title/time/location 平等
+
+  --- 补充：第三次修复（用户否决 hack 后，正式加 author 字段） ---
+  彻底方案：给 item 对象加 author 字段，成为正式结构的一部分。
+
+  修改清单：
+  (a) store.js createItem：
+      return { ...,
+        author: data.author ? String(data.author).trim() : '匿名同学',
+        ...
+      };
+  (b) store.js searchItems：
+      haystack 从硬编码 '匿名同学 发布者' 改为 it.author || ''
+  (c) app.js renderDetail：
+      从硬编码 "匿名同学" 改为 Store.escapeHtml(it.author || '匿名同学')
+  (d) seed.js：6 条种子数据加不同的 author 字段
+      （"热心同学""张同学""匿名同学""小王同学""宿管阿姨""李明"）
+  (e) test.html：
+      - ITEMS mock 加 author 字段
+      - 测试从"搜匿名同学命中全部"改为"搜真实 author 命中正确条目"
+
+  旧数据兼容：localStorage 里已有的条目没有 author 字段，
+              createItem 默认值 + renderDetail 的 author||'匿名同学'
+              + searchItems 的 it.author||'' 兜底全部处理。
+              用户手动搜"发布者"三个字不会再命中。
+
+  验证：
+  - test.html 52/52 全绿
+  - 首页搜"李明"→ 找到 1 条（seed_6 李明的校园卡）
+  - 详情页发布者字段显示 author 真实值（如"李明""宿管阿姨"）
+  - 搜"不存在的名字"→ 返回 0 条 ✅
+
+
+════════════════════════════════════════════════════════════
+【defect4】 可以输入非法未来时间并发布成功
+════════════════════════════════════════════════════════
+
+  问题描述：
+    validateItem 只校验了时间格式正则，没有校验时间不能晚于当前时间。
+    用户可以把发布时间选成"下周"然后成功发布。
+
+  修改文件：js/store.js —— validateItem 函数（时间校验分支内新增一层）
+
+  修改前：正则通过就放行
+
+  修改后：正则通过后，把时间字符串转成 Date 再和 Date.now() 比较，
+          宽容 1 分钟误差（用户在整点附近提交）：
+    } else {
+      var ts = new Date(timeStr.replace(' ', 'T')).getTime();
+      if (!isNaN(ts) && ts > Date.now() + 60000) {
+        errors.push('时间非法，请不要填写未来时间');
+      }
+    }
+
+  测试：
+    test.html 新增 1 条守护测试：
+    - validateItem 未来时间（1 小时后）应返回包含"未来时间"的错误
+
+
+════════════════════════════════════════════════════════════
+本次修改文件汇总
+════════════════════════════════════════════════════════
+  js/store.js      ← defect3 + defect4
+  js/app.js        ← defect1
+  index.html       ← defect1
+  css/style.css    ← defect2
+  test/test.html   ← 补 3 条守护测试（48→51）
+
+不影响已有的 48 条单元测试，新增 3 条全绿通过。
