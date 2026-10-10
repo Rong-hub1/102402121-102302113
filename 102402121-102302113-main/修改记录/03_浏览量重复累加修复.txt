@@ -1,0 +1,82 @@
+=== Bug 修复记录 #3 ===
+修复日期：2026-10-10
+修复人：Agent
+
+------------------------
+一、问题描述
+------------------------
+文件：js/app.js 原第 148-153 行 openDetail() 函数
+
+原代码每次打开详情页都会无条件执行：
+  state.items = Store.incrementViews(state.items, id);
+  persist();
+
+导致以下场景浏览量被虚高：
+1. 用户反复在首页和同一条详情页之间切换（每次都 +1）
+2. 用户点击首页列表卡片 → 详情页 → 返回首页 → 再次点击同一条
+3. 用户标记完已完成后返回首页，又点进去看状态
+
+浏览量应该代表"独立访客数"或"首次访问次数"，重复累加不符合实际语义。
+
+------------------------
+二、修改方式
+------------------------
+引入 sessionStorage 记录当前浏览器会话内已经浏览过的条目 id 列表：
+- 首次打开某条详情 → 浏览量 +1，id 加入 sessionStorage
+- 同会话内再次打开同一条 → 直接跳转，不再累加
+- 关闭浏览器 / 切换标签页 / 重启浏览器 → sessionStorage 自动清空，下次视为新访客
+
+用 try-catch 包裹 sessionStorage 读写，避免无痕模式或特殊环境下抛异常。
+sessionStorage 与 localStorage 隔离，不会污染已有的业务数据键 lost_found_items_v1。
+
+------------------------
+三、修改代码对比
+------------------------
+【修改前】js/app.js 顶部 + openDetail()：
+
+  var Store = window.LostFoundStore;
+  var SEED = window.LostFoundSeed;
+  var $ = function (id) { return document.getElementById(id); };
+
+  ...
+
+  function openDetail(id) {
+    // 浏览量 +1
+    state.items = Store.incrementViews(state.items, id);
+    persist();
+    go('detail', id);
+  }
+
+【修改后】js/app.js 顶部 + openDetail()：
+
+  var Store = window.LostFoundStore;
+  var SEED = window.LostFoundSeed;
+  var $ = function (id) { return document.getElementById(id); };
+  // 浏览量去重：同一会话内同一详情页只加一次浏览量
+  var VIEWED_KEY = 'lost_found_viewed_ids';
+
+  ...
+
+  function openDetail(id) {
+    // 浏览量 +1（同一会话内同一条目不重复累加）
+    var viewed = [];
+    try {
+      viewed = JSON.parse(sessionStorage.getItem(VIEWED_KEY) || '[]');
+    } catch (e) { viewed = []; }
+    if (viewed.indexOf(id) === -1) {
+      state.items = Store.incrementViews(state.items, id);
+      viewed.push(id);
+      try { sessionStorage.setItem(VIEWED_KEY, JSON.stringify(viewed)); } catch (e) {}
+      persist();
+    }
+    go('detail', id);
+  }
+
+------------------------
+四、影响范围
+------------------------
+- 浏览量不再虚高，同一会话内每条信息的 views 最多 +1
+- 已保存的历史 views 数据不受影响（持久化的 localStorage 不改变）
+- 单元测试 store.js 层面 incrementViews 行为未变，测试仍然全绿
+- 用户手动清空浏览器数据后（localStorage 和 sessionStorage 都会清），恢复示例数据
+  时浏览量从示例值开始
